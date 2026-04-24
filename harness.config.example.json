@@ -1,0 +1,13 @@
+{
+  "watch_prefixes": ["com.mycompany."],
+  "selfheal_allowlist": [
+    "com.mycompany.blog-publisher",
+    "com.mycompany.nightly-backup"
+  ],
+  "telegram": {
+    "bot_token_env": "HARNESS_TG_TOKEN",
+    "bot_token_file": "~/.config/openclaw-harness/tg-token",
+    "chat_id": "123456789"
+  },
+  "state_dir": "~/.config/openclaw-harness"
+}

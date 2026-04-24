@@ -1,0 +1,29 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: python -m pytest tests/ -q
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Scan the FULL history directly rather than the push-event commit range.
+      # gitleaks-action derives a base..head range from the push payload, which
+      # breaks (invalid range -> git error -> job failure) whenever history is
+      # rewritten/force-pushed. A full --log-opts=--all scan is deterministic.
+      - name: gitleaks (full history)
+        run: |
+          VER=8.24.3
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" | tar -xz gitleaks
+          ./gitleaks detect --source . --no-banner --redact --log-opts=--all
