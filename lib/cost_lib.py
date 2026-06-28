@@ -64,7 +64,7 @@ def ws_label(wid: str | None, ws_names: dict) -> str:
 
 
 def cache_hit_pct(full_in: float, cached_in: float) -> float | None:
-    """% of input $ that hit OpenAI's prompt cache.
+    """% of input $ that hit Anthropic's prompt cache.
 
     full_in = sum of "input" / "input, long context" line items
     cached_in = sum of "cached input" / "cached input, long context"
