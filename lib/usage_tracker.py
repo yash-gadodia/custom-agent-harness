@@ -10,7 +10,7 @@ durationMs is wall-clock for the full turn (including tool calls);
 rawLines is the number of stream-json events the CLI emitted on that
 turn (proxy for reasoning + tool-call density). Neither is dollars,
 but together they answer: "did anything spike today?" which is the
-real question given the deployment runs Claude Max (no per-token billing).
+real question on a Claude Max subscription (no per-token billing).
 
 For per-agent attribution the log would need to be cross-referenced
 with the adjacent [<agent-name>] lines from the same sub-second window

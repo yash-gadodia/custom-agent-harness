@@ -1,4 +1,4 @@
-"""Self-heal for the two recurring causes of chat agents going silent.
+"""Self-heal for the two recurring causes of an always-on agent going silent.
 
 1. Node-host wedge. The gateway watchdog bounces the gateway (~every 12h), but
    the long-lived node host that holds the Telegram + WhatsApp connections does
@@ -75,3 +75,13 @@ def auth_decision(token, now_ms):
             when = f" (hard-expires in ~{mins} min)" if mins else " (already past expiry)"
         return "no_refresh", f"claude-cli token has NO refresh token{when} — it cannot self-renew; re-auth soon"
     return None, None
+
+
+def is_token_healthy(token, now_ms):
+    """True when the isolated claude-cli token can serve/self-renew — i.e.
+    auth_decision finds none of the fatal states (missing/expired/no_refresh).
+    A token with a refresh token is healthy even past its access-token expiry.
+    Used by reseed-openclaw-cred.py to decide when a reseed is needed and which
+    backup/keychain sources are safe to reseed from."""
+    level, _ = auth_decision(token, now_ms)
+    return level is None

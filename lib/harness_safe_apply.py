@@ -25,10 +25,8 @@ import subprocess
 # path) is NOT eligible for auto-apply — it goes to propose-only in the digest.
 # Mirrors the selfheal NEVER_ALLOWLIST philosophy: nothing that can message a
 # customer or take down the gateway gets auto-changed.
-NEVER_AUTOAPPLY_SUBSTRINGS = (
-    # Per deployment: path substrings whose changes must never auto-apply
-    # (anything that can message a customer or take down the runtime).
-    "gateway", "send", "payment", "auth",
+NEVER_AUTOAPPLY_SUBSTRINGS = (  # per deployment: protected surfaces (customer-facing, gateway, outbound)
+    "gateway", "customer-agent", "whatsapp", "wa-", "send",
 )
 
 

@@ -6,7 +6,7 @@ Bounded-context summarization patterned on Hermes's trajectory_compressor:
   uses on the next turn.
 - LLM-summarize everything in between when the file crosses a size threshold.
 - Emit a new .compressed.jsonl with parent_session_id pointing at the original
-  for audit. Do NOT delete the original — the MEMORY.md explicitly forbids
+  for audit. Do NOT delete the original — operator policy forbids
   deleting OpenClaw session transcripts (resets agent memory).
 
 The LLM call goes through `claude --dangerously-skip-permissions -p` so it
