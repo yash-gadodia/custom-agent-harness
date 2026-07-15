@@ -36,11 +36,15 @@ def decide_self_heal(streak, last_restart_at, now,
 
 
 def load_state(path):
-    """Read {streak, last_restart_at}; defaults on missing/corrupt file."""
+    """Read {streak, last_restart_at}; defaults on missing/corrupt/partial file."""
     try:
-        return json.loads(Path(path).read_text())
+        data = json.loads(Path(path).read_text())
+        if not isinstance(data, dict):
+            data = {}
     except Exception:
-        return {"streak": 0, "last_restart_at": None}
+        data = {}
+    return {"streak": data.get("streak", 0),
+            "last_restart_at": data.get("last_restart_at")}
 
 
 def save_state(streak, last_restart_at, path):
