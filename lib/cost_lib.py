@@ -107,10 +107,11 @@ def next_threshold_crossed(pct: float, prior_alerted: int,
     already alerted on this week.
 
     Returns 0 if no new crossing (already alerted at or above current %, or
-    not yet at the lowest threshold). Thresholds must be sorted ascending.
+    not yet at the lowest threshold). Thresholds may be passed in any order —
+    the returned value is always the highest newly-crossed one.
     """
     new_thr = 0
     for t in thresholds:
-        if pct >= t and t > prior_alerted:
+        if pct >= t and t > prior_alerted and t > new_thr:
             new_thr = t
     return new_thr

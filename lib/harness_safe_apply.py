@@ -71,11 +71,20 @@ def promote(sandbox_dir, live_dir, rel_files):
             os.replace(tmp, dst)
             if not existed:
                 created.append(dst)
+        # All replaces succeeded; live is fully updated. Bak cleanup MUST be
+        # best-effort: a raise here would fall into the rollback path, which
+        # would then os.replace baks over the already-promoted new content
+        # (undoing a good promote) and crash on any bak the cleanup already
+        # removed, leaving live in a half-reverted state.
         for _, bak in backups:
-            os.remove(bak)
+            try:
+                os.remove(bak)
+            except OSError:
+                pass
     except Exception:
         for dst, bak in backups:
-            os.replace(bak, dst)
+            if os.path.exists(bak):
+                os.replace(bak, dst)
         for dst in created:
             if os.path.exists(dst):
                 os.remove(dst)
