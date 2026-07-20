@@ -23,9 +23,12 @@ COOLDOWN_S = 24 * 60 * 60
 MAX_ATTEMPTS = 2
 
 
-def decide(failures: dict[str, str], state: dict, now: float, allowlist=None):
+def decide(failures: dict[str, str], state: dict, now: float,
+           allowlist=None, never_substrings=None):
     """Return (kickstarts, recovered, escalations, new_state)."""
     allowlist = ALLOWLIST if allowlist is None else frozenset(allowlist)
+    never_substrings = (NEVER_ALLOWLIST_SUBSTRINGS if never_substrings is None
+                        else tuple(never_substrings))
     kickstarts: list[str] = []
     recovered: list[str] = []
     escalations: list[tuple[str, str]] = []
@@ -39,6 +42,11 @@ def decide(failures: dict[str, str], state: dict, now: float, allowlist=None):
 
     for label, status in sorted(failures.items()):
         if label not in allowlist:
+            continue
+        # Defense in depth: even if a protected-surface label is added to
+        # ALLOWLIST by mistake, the denylist must still refuse to touch it.
+        low = label.lower()
+        if any(sub in low for sub in never_substrings):
             continue
         entry = new_state.get(label)
         if entry is None:
