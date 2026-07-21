@@ -69,16 +69,13 @@ def auth_decision(token, now_ms):
     if exp is not None and exp <= now_ms and not has_refresh:
         return "expired", "claude-cli token expired with no refresh token — re-auth required"
     if not has_refresh:
+        # Reachable only when exp is None or exp > now_ms (the expired+no_refresh
+        # case returned above), so diff_ms is always positive here.
         when = ""
         if exp is not None:
-            diff_ms = exp - now_ms
-            if diff_ms <= 0:
-                when = " (already past expiry)"
-            else:
-                # Ceiling so a 30s-remaining token doesn't round down to 0 and
-                # get mislabeled "already past expiry".
-                mins = max(1, (diff_ms + 59_999) // 60_000)
-                when = f" (hard-expires in ~{mins} min)"
+            # Ceiling so a 30s-remaining token doesn't round down to 0 min.
+            mins = max(1, (exp - now_ms + 59_999) // 60_000)
+            when = f" (hard-expires in ~{mins} min)"
         return "no_refresh", f"claude-cli token has NO refresh token{when} — it cannot self-renew; re-auth soon"
     return None, None
 
