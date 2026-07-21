@@ -114,6 +114,34 @@ class TestSafetyContract:
     def test_gateway_never_allowlisted(self, lib):
         assert not any("gateway" in label for label in lib.ALLOWLIST)
 
+    def test_denylist_blocks_kickstart_even_when_allowlisted(self, lib):
+        # Defense in depth: a protected-surface label added to ALLOWLIST by
+        # mistake must still never be auto-kickstarted.
+        # "gateway" is denylisted in every deployment config, so this holds
+        # for both the live and the exported-generic copies of the lib.
+        bad = "com.example.gateway-restart"
+        kicks, healed, esc, state = lib.decide(
+            {bad: "1"}, {}, NOW, allowlist=frozenset({bad}))
+        assert kicks == [] and esc == [] and state == {}
+
+    def test_denylist_match_is_case_insensitive(self, lib):
+        bad = "com.example.GateWay-Restart"
+        kicks, _, esc, state = lib.decide(
+            {bad: "1"}, {}, NOW, allowlist=frozenset({bad}))
+        assert kicks == [] and esc == [] and state == {}
+
+    def test_every_banned_substring_blocks_kickstart(self, lib):
+        for sub in lib.NEVER_ALLOWLIST_SUBSTRINGS:
+            bad = f"com.example.{sub}-job"
+            kicks, _, esc, state = lib.decide(
+                {bad: "1"}, {}, NOW, allowlist=frozenset({bad}))
+            assert kicks == [] and esc == [] and state == {}, sub
+
+    def test_denylist_does_not_touch_clean_allowlisted_jobs(self, lib):
+        # The denylist must only subtract, never block a clean label.
+        kicks, _, _, _ = lib.decide({JOB: "1"}, {}, NOW, allowlist=AL)
+        assert kicks == [JOB]
+
     def test_decide_does_not_mutate_inputs(self, lib):
         st = attempted(lib.VERIFY_GRACE_S + 1)
         failures = {JOB: "1"}
