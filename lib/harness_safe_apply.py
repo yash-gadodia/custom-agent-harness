@@ -60,8 +60,11 @@ def promote(sandbox_dir, live_dir, rel_files):
             dst = os.path.join(live_dir, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             tmp = dst + ".promote.tmp"
-            shutil.copy2(src, tmp)
+            # Register BEFORE the copy so a mid-copy failure still lets the
+            # rollback path remove any partial .promote.tmp — otherwise a
+            # crashed copy2 leaves orphan cruft inside live_dir.
             staged.append((dst, tmp))
+            shutil.copy2(src, tmp)
         for dst, tmp in staged:
             existed = os.path.exists(dst)
             if existed:
