@@ -117,6 +117,49 @@ def test_no_refresh_token_warns_early(cs):
     assert level == "no_refresh" and "min" in detail
 
 
+DAY_MS = 86_400_000
+
+
+def test_refresh_token_expired_is_fatal(cs):
+    # The exact 2026-08-03 dead state: refresh token PRESENT but hard-expired,
+    # so renewal 401s. Pre-fix this classified silent (has_refresh -> healthy).
+    tok = {"present": True, "expires_at_ms": int(NOW * 1000) + 3_600_000,
+           "has_refresh": True, "refresh_expires_at_ms": int(NOW * 1000) - 1}
+    level, detail = cs.auth_decision(tok, int(NOW * 1000))
+    assert level == "refresh_expired" and "hard-expired" in detail
+
+
+def test_refresh_token_expiring_warns_before_outage(cs):
+    # Inside the warn window: agents still work, but re-auth while it's cheap.
+    tok = {"present": True, "expires_at_ms": int(NOW * 1000) + 3_600_000,
+           "has_refresh": True, "refresh_expires_at_ms": int(NOW * 1000) + 2 * DAY_MS}
+    level, detail = cs.auth_decision(tok, int(NOW * 1000))
+    assert level == "refresh_expiring" and "~2d" in detail
+
+
+def test_refresh_token_expiring_rounds_up_not_to_zero(cs):
+    # 6h left must not render as "~0d".
+    tok = {"present": True, "expires_at_ms": int(NOW * 1000) + 60_000,
+           "has_refresh": True, "refresh_expires_at_ms": int(NOW * 1000) + 6 * 3_600_000}
+    _, detail = cs.auth_decision(tok, int(NOW * 1000))
+    assert "~1d" in detail
+
+
+def test_refresh_token_far_out_is_silent(cs):
+    # Healthy 28-day refresh token (the state right after a fresh login).
+    tok = {"present": True, "expires_at_ms": int(NOW * 1000) + 3_600_000,
+           "has_refresh": True, "refresh_expires_at_ms": int(NOW * 1000) + 28 * DAY_MS}
+    assert cs.auth_decision(tok, int(NOW * 1000)) == (None, None)
+
+
+def test_absent_refresh_expiry_field_stays_silent(cs):
+    # Older token records carry no refreshTokenExpiresAt — must not regress to
+    # an alert just because the field is missing.
+    tok = {"present": True, "expires_at_ms": int(NOW * 1000) + 3_600_000,
+           "has_refresh": True, "refresh_expires_at_ms": None}
+    assert cs.auth_decision(tok, int(NOW * 1000)) == (None, None)
+
+
 # ---------- is_token_healthy (reseed gate) ----------
 
 def test_is_token_healthy_true_with_refresh(cs):
@@ -133,3 +176,20 @@ def test_is_token_healthy_false_when_blanked(cs):
     # The blanked-entry outage state: present but no access/refresh, exp 0.
     tok = {"present": True, "expires_at_ms": 0, "has_refresh": False}
     assert cs.is_token_healthy(tok, int(NOW * 1000)) is False
+
+
+def test_is_token_healthy_false_when_refresh_expired(cs):
+    # Must be rejected as a reseed SOURCE — restoring it would "succeed" and
+    # then 401, which is how 12 backups burned on 2026-08-03.
+    tok = {"present": True, "expires_at_ms": int(NOW * 1000) + 3_600_000,
+           "has_refresh": True, "refresh_expires_at_ms": int(NOW * 1000) - 1}
+    assert cs.is_token_healthy(tok, int(NOW * 1000)) is False
+
+
+def test_is_token_healthy_true_when_refresh_merely_expiring(cs):
+    # Warn-only, NOT fatal: a token with 2 days left still works, so it must
+    # stay selectable as a reseed source. Guards against the warn level
+    # accidentally disqualifying every usable backup.
+    tok = {"present": True, "expires_at_ms": int(NOW * 1000) + 3_600_000,
+           "has_refresh": True, "refresh_expires_at_ms": int(NOW * 1000) + 2 * DAY_MS}
+    assert cs.is_token_healthy(tok, int(NOW * 1000)) is True
