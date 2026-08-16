@@ -10,6 +10,8 @@ you probe, how you restart, how you alert) is the caller's.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 # Defaults; override per deployment.
@@ -60,9 +62,24 @@ def load_state(path):
 
 
 def save_state(streak, last_restart_at, path):
-    """Atomically persist {streak, last_restart_at}."""
+    """Atomically persist {streak, last_restart_at}.
+
+    Uses a unique per-write tempfile (matching alert_gate.py) so two
+    concurrent invocations cannot race on the same .tmp path and lose one
+    another's write — the previous single-path .tmp was a silent corruption
+    risk if the probe ever overlapped with a manual/adhoc save.
+    """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"streak": streak, "last_restart_at": last_restart_at}))
-    tmp.replace(p)
+    fd = tempfile.NamedTemporaryFile("w", dir=str(p.parent),
+                                     prefix=".sh-", suffix=".tmp", delete=False)
+    try:
+        json.dump({"streak": streak, "last_restart_at": last_restart_at}, fd)
+        fd.close()
+        os.replace(fd.name, p)
+    except Exception:
+        try:
+            os.unlink(fd.name)
+        except Exception:
+            pass
+        raise
