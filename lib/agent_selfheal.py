@@ -67,19 +67,23 @@ def save_state(streak, last_restart_at, path):
     Uses a unique per-write tempfile (matching alert_gate.py) so two
     concurrent invocations cannot race on the same .tmp path and lose one
     another's write — the previous single-path .tmp was a silent corruption
-    risk if the probe ever overlapped with a manual/adhoc save.
+    risk if the probe ever overlapped with a manual/adhoc save. The `with fd`
+    guarantees the descriptor is closed even when json.dump raises (e.g. on a
+    non-serialisable value slipped in via a hand-edit), so a repeated write
+    failure cannot slowly leak file descriptors.
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     fd = tempfile.NamedTemporaryFile("w", dir=str(p.parent),
                                      prefix=".sh-", suffix=".tmp", delete=False)
+    tmp = fd.name
     try:
-        json.dump({"streak": streak, "last_restart_at": last_restart_at}, fd)
-        fd.close()
-        os.replace(fd.name, p)
+        with fd:
+            json.dump({"streak": streak, "last_restart_at": last_restart_at}, fd)
+        os.replace(tmp, p)
     except Exception:
         try:
-            os.unlink(fd.name)
+            os.unlink(tmp)
         except Exception:
             pass
         raise
