@@ -42,7 +42,11 @@ def load_state(path):
 
     Also coerces obviously-bad field types back to defaults — a hand-edited
     state file with e.g. "streak": "5" would otherwise crash decide_self_heal
-    on the comparison, defeating the whole fallback-to-defaults intent.
+    on the comparison, defeating the whole fallback-to-defaults intent. NaN
+    and negative last_restart_at are rejected too: NaN comparisons are always
+    False, so a hand-edited NaN (json.loads accepts it) would make the cooldown
+    check evaluate False and silently bypass the exact restart-storm guard the
+    cooldown exists to enforce.
     """
     try:
         data = json.loads(Path(path).read_text())
@@ -54,10 +58,12 @@ def load_state(path):
     if isinstance(streak, bool) or not isinstance(streak, int) or streak < 0:
         streak = 0
     last_restart_at = data.get("last_restart_at")
-    if last_restart_at is not None and (
-        isinstance(last_restart_at, bool) or not isinstance(last_restart_at, (int, float))
-    ):
-        last_restart_at = None
+    if last_restart_at is not None:
+        if (isinstance(last_restart_at, bool)
+                or not isinstance(last_restart_at, (int, float))
+                or last_restart_at != last_restart_at   # NaN
+                or last_restart_at < 0):
+            last_restart_at = None
     return {"streak": streak, "last_restart_at": last_restart_at}
 
 
