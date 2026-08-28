@@ -58,3 +58,44 @@ def test_state_roundtrip(lib, tmp_path):
 def test_state_defaults_on_missing(lib, tmp_path):
     s = lib.load_state(tmp_path / "nope.json")
     assert s == {"streak": 0, "last_restart_at": None}
+
+
+# ---------- corrupt last_restart_at (regression: b25fa33) -------------------
+# NaN comparisons are always False, so a hand-edited NaN (json.loads accepts
+# bare NaN) would make the cooldown check evaluate False and silently bypass
+# the restart-storm guard. load_state must coerce NaN/negative back to None.
+
+def test_load_state_rejects_nan_restart_at(lib, tmp_path):
+    p = tmp_path / "state.json"
+    p.write_text('{"streak": 3, "last_restart_at": NaN}')
+    s = lib.load_state(p)
+    assert s["last_restart_at"] is None
+    assert s["streak"] == 3  # other fields untouched
+
+
+def test_load_state_rejects_negative_restart_at(lib, tmp_path):
+    p = tmp_path / "state.json"
+    p.write_text('{"streak": 2, "last_restart_at": -5}')
+    assert lib.load_state(p)["last_restart_at"] is None
+
+
+def test_load_state_rejects_bool_and_string_restart_at(lib, tmp_path):
+    p = tmp_path / "state.json"
+    p.write_text('{"streak": 2, "last_restart_at": true}')
+    assert lib.load_state(p)["last_restart_at"] is None
+    p.write_text('{"streak": 2, "last_restart_at": "12345"}')
+    assert lib.load_state(p)["last_restart_at"] is None
+
+
+def test_load_state_keeps_valid_restart_at(lib, tmp_path):
+    p = tmp_path / "state.json"
+    p.write_text('{"streak": 2, "last_restart_at": 12345.5}')
+    assert lib.load_state(p)["last_restart_at"] == 12345.5
+
+
+def test_save_state_cleans_up_tempfile_on_dump_failure(lib, tmp_path):
+    p = tmp_path / "state.json"
+    with pytest.raises(TypeError):
+        lib.save_state(1, object(), p)  # unserialisable value
+    assert list(tmp_path.glob(".sh-*.tmp")) == []  # tempfile unlinked
+    assert not p.exists()  # no partial state written
