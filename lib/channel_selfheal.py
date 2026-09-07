@@ -29,6 +29,8 @@ from __future__ import annotations
 
 CHANNEL_FAIL_THRESHOLD = 2          # consecutive degraded checks before a kick (~10min at 300s)
 KICK_COOLDOWN_S = 15 * 60           # don't re-kick within this window of the last kick
+GATEWAY_ESCALATE_AFTER = 2          # node-host kicks that failed to restore before escalating
+GATEWAY_RESTART_COOLDOWN_S = 30 * 60
 AUTH_WARN_DAYS = 3
 AUTH_WARN_MS = AUTH_WARN_DAYS * 24 * 60 * 60 * 1000
 
@@ -39,23 +41,45 @@ AUTH_WARN_MS = AUTH_WARN_DAYS * 24 * 60 * 60 * 1000
 FATAL_AUTH_LEVELS = frozenset({"missing", "expired", "no_refresh", "refresh_expired"})
 
 
+def iter_channel_states(health):
+    """Yield (label, state) for every channel ACCOUNT, not just the channel.
+
+    `health.channels.<name>` mirrors that channel's DEFAULT account only, so a
+    loop over the top-level entries is blind to every other account. On
+    2026-08-31 two non-default Telegram accounts sat stopped for 5h while this
+    script logged only "whatsapp": telegram's top-level block was the healthy
+    `default` account, and their real state lived under `.accounts.<id>`.
+
+    Falls back to the top-level entry when a channel exposes no accounts map,
+    so a provider without multi-account support still gets checked.
+    """
+    channels = (health or {}).get("channels", {}) or {}
+    for name, c in channels.items():
+        if not isinstance(c, dict):
+            continue
+        accounts = c.get("accounts")
+        if isinstance(accounts, dict) and accounts:
+            for acct_id, acct in accounts.items():
+                if isinstance(acct, dict):
+                    yield f"{name}:{acct_id}", acct
+        else:
+            yield name, c
+
+
 def channel_decision(health, streak, last_kick_at, now):
     """Decide whether the node host is wedged and should be kicked.
 
     Returns (degraded, kick, down, new_streak, new_last_kick_at).
-      degraded         any enabled+configured channel not connected+running
+      degraded         any enabled+configured account not connected+running
       kick             streak crossed threshold and outside the kick cooldown
-      down             list of degraded channel names (for the alert)
+      down             list of degraded "channel:account" labels (for the alert)
     """
-    channels = (health or {}).get("channels", {}) or {}
     down = []
-    for name, c in channels.items():
-        if not isinstance(c, dict):
-            continue
+    for label, c in iter_channel_states(health):
         if not c.get("enabled") or not c.get("configured"):
             continue
         if not (c.get("connected") and c.get("running")):
-            down.append(name)
+            down.append(label)
 
     if not down:
         return False, False, [], 0, last_kick_at
@@ -65,6 +89,36 @@ def channel_decision(health, streak, last_kick_at, now):
         last_kick_at is None or now - last_kick_at >= KICK_COOLDOWN_S
     )
     return True, kick, sorted(down), new_streak, (now if kick else last_kick_at)
+
+
+def escalation_decision(down, kicks_since_recovery, escalated_for, last_gw_restart_at, now):
+    """Decide whether to escalate from a node-host kick to a gateway restart.
+
+    The node-host kick cannot clear a `channel stop timed out after 5000ms`
+    wedge: the health-monitor retries that account every 10 min forever and a
+    config hot-reload does not recover it either — only a full gateway restart
+    does (seen 2026-08-25 and twice on 2026-08-31). So after the kicks have
+    demonstrably failed, escalate.
+
+    The `escalated_for` guard is what keeps this safe. WhatsApp `default` has
+    been unrecoverably down for ~54h (streak 649), and escalating on every cycle
+    would restart the gateway every 30 min forever, taking healthy accounts down
+    with it. We therefore escalate ONCE per distinct down-set: a set we have
+    already restarted for is considered "known broken, restart didn't help", but
+    a NEW account joining the set is a fresh wedge and earns a fresh restart.
+
+    Returns (restart_gateway, new_escalated_for).
+    """
+    sig = sorted(down or [])
+    if not sig:
+        return False, None
+    if kicks_since_recovery < GATEWAY_ESCALATE_AFTER:
+        return False, escalated_for
+    if escalated_for is not None and sorted(escalated_for) == sig:
+        return False, escalated_for      # already tried a restart for exactly this
+    if last_gw_restart_at is not None and now - last_gw_restart_at < GATEWAY_RESTART_COOLDOWN_S:
+        return False, escalated_for
+    return True, sig
 
 
 def auth_decision(token, now_ms):
