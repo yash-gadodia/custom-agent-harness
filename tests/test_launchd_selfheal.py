@@ -148,3 +148,49 @@ class TestSafetyContract:
         st_snap, failures_snap = copy.deepcopy(st), dict(failures)
         lib.decide(failures, st, NOW, allowlist=AL)
         assert st == st_snap and failures == failures_snap
+
+
+class TestRunningIsNotRecovery:
+    """Regression: 2026-09-07 repeat-page loop.
+
+    `failures` omits a job with a live PID. Reading that absence as recovery
+    cleared the episode, so the next observed failure looked new and the
+    kickstart -> escalate -> "didn't stick, needs you" cycle repeated every
+    ~30 min. Both MAX_ATTEMPTS and COOLDOWN_S are per-episode, so neither
+    could bound it once the episode was reborn each pass.
+    """
+
+    def test_running_job_is_held_not_healed(self, lib):
+        state = attempted(lib.VERIFY_GRACE_S + 1, escalated=True)
+        kicks, healed, esc, new = lib.decide(
+            {}, state, NOW, allowlist=AL, running={JOB})
+        assert healed == [], "a mid-run sample must never read as recovery"
+        assert kicks == [] and esc == []
+        assert new[JOB] == state[JOB]
+
+    def test_escalated_flag_survives_a_running_pass(self, lib):
+        """The whole point: after the hold, the job must not re-escalate."""
+        state = attempted(lib.VERIFY_GRACE_S + 1, escalated=True)
+        _, _, _, held = lib.decide({}, state, NOW, allowlist=AL, running={JOB})
+        _, healed, esc, _ = lib.decide(
+            {JOB: "1"}, held, NOW + 60, allowlist=AL)
+        assert esc == [], "already escalated once; must wait for the human"
+        assert healed == []
+
+    def test_absent_and_not_running_still_recovers(self, lib):
+        """The hold must not swallow genuine recoveries."""
+        _, healed, _, new = lib.decide(
+            {}, attempted(lib.VERIFY_GRACE_S + 1), NOW,
+            allowlist=AL, running=set())
+        assert healed == [JOB] and new == {}
+
+    def test_running_does_not_block_a_first_kickstart(self, lib):
+        """A job seen failing is actionable even if another job is running."""
+        kicks, _, _, _ = lib.decide(
+            {JOB: "1"}, {}, NOW, allowlist=AL, running={JOB2})
+        assert kicks == [JOB]
+
+    def test_default_running_reproduces_old_behaviour(self, lib):
+        _, healed, _, _ = lib.decide(
+            {}, attempted(lib.VERIFY_GRACE_S + 1), NOW, allowlist=AL)
+        assert healed == [JOB]
