@@ -77,6 +77,12 @@ def save_state(streak, last_restart_at, path):
     guarantees the descriptor is closed even when json.dump raises (e.g. on a
     non-serialisable value slipped in via a hand-edit), so a repeated write
     failure cannot slowly leak file descriptors.
+
+    Written file is chmod'd 0o600 to match alert_gate._save and
+    calorie_lib._atomic_write_json — self-heal state carries restart
+    timestamps that shouldn't inherit a lax umask on a shared host, and
+    consistency across the three persistence helpers keeps the owner-only
+    posture from drifting over time.
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -87,6 +93,10 @@ def save_state(streak, last_restart_at, path):
         with fd:
             json.dump({"streak": streak, "last_restart_at": last_restart_at}, fd)
         os.replace(tmp, p)
+        try:
+            os.chmod(p, 0o600)
+        except OSError:
+            pass
     except Exception:
         try:
             os.unlink(tmp)
