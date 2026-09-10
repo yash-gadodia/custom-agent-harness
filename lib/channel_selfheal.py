@@ -31,6 +31,17 @@ CHANNEL_FAIL_THRESHOLD = 2          # consecutive degraded checks before a kick 
 KICK_COOLDOWN_S = 15 * 60           # don't re-kick within this window of the last kick
 GATEWAY_ESCALATE_AFTER = 2          # node-host kicks that failed to restore before escalating
 GATEWAY_RESTART_COOLDOWN_S = 30 * 60
+
+# Circuit breaker (2026-09-10, approved 20260910-f265c7): on 2026-09-01
+# whatsapp:default sat degraded at streak 875+ while kicks kept firing for
+# DAYS — a kick that cannot fix the root cause hammers the channel forever,
+# and each restart cycle can drop inbound WA messages. After
+# BREAKER_TRIP_KICKS failed kick→verify cycles inside BREAKER_WINDOW_S, hold
+# ALL automatic recovery (kicks + gateway escalation) for BREAKER_HOLD_S,
+# alert once, then allow a single retry per hold expiry.
+BREAKER_TRIP_KICKS = 3
+BREAKER_WINDOW_S = 30 * 60
+BREAKER_HOLD_S = 2 * 60 * 60
 AUTH_WARN_DAYS = 3
 AUTH_WARN_MS = AUTH_WARN_DAYS * 24 * 60 * 60 * 1000
 
@@ -119,6 +130,47 @@ def escalation_decision(down, kicks_since_recovery, escalated_for, last_gw_resta
     if last_gw_restart_at is not None and now - last_gw_restart_at < GATEWAY_RESTART_COOLDOWN_S:
         return False, escalated_for
     return True, sig
+
+
+def breaker_decision(failed_kicks, hold_until, retry_used, degraded, now):
+    """Circuit breaker over the kick/gateway-restart machinery.
+
+    failed_kicks  epoch seconds of kicks fired since the last recovery. The
+                  driver appends optimistically on every kick; recovery clears
+                  the list, so anything still on it while degraded is a kick
+                  that verifiably did not restore the channel.
+    hold_until    epoch seconds the breaker is open until, or None (closed)
+    retry_used    True once the post-expiry retry cycle has been granted
+    degraded      this cycle's channel state
+
+    Returns (allow_actions, trip, new_failed_kicks, new_hold_until, new_retry_used)
+      allow_actions  False → suppress BOTH the node-host kick and the gateway
+                     escalation this cycle
+      trip           True exactly once, on the cycle the breaker first opens
+                     (fire the one P0 escalation DM there). Re-arms after a
+                     failed retry are silent — a 2-hourly repeat DM for the
+                     same dead channel is exactly the spam this exists to stop.
+
+    Closed → open: BREAKER_TRIP_KICKS failed kicks within BREAKER_WINDOW_S.
+    Open → half-open: hold expiry grants ONE retry cycle (retry_used).
+    Half-open → closed: the retry recovers the channel (degraded False).
+    Half-open → open: still degraded after the retry → re-arm silently.
+    """
+    if not degraded:
+        return True, False, [], None, False
+    recent = [t for t in failed_kicks if now - t <= BREAKER_WINDOW_S]
+    if hold_until is None:
+        if len(recent) >= BREAKER_TRIP_KICKS:
+            return False, True, recent, now + BREAKER_HOLD_S, False
+        return True, False, recent, None, False
+    if now < hold_until:
+        return False, False, recent, hold_until, retry_used
+    if not retry_used:
+        # Hold expired: half-open. KICK_COOLDOWN_S has long passed during the
+        # hold, so the very next degraded cycle actually fires the retry kick.
+        return True, False, recent, hold_until, True
+    # Retry was granted and the channel is still degraded → re-arm.
+    return False, False, recent, now + BREAKER_HOLD_S, False
 
 
 def auth_decision(token, now_ms):

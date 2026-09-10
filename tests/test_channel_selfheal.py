@@ -193,3 +193,102 @@ def test_is_token_healthy_true_when_refresh_merely_expiring(cs):
     tok = {"present": True, "expires_at_ms": int(NOW * 1000) + 3_600_000,
            "has_refresh": True, "refresh_expires_at_ms": int(NOW * 1000) + 2 * DAY_MS}
     assert cs.is_token_healthy(tok, int(NOW * 1000)) is True
+
+
+# ---------- breaker_decision (circuit breaker, approved 20260910-f265c7) ----
+# 2026-09-01: whatsapp:default degraded at streak 875+ with kicks still firing
+# after DAYS. After 3 failed kicks in 30 min the breaker opens for 2h (no
+# kicks, no gateway escalation, ONE trip alert), then grants a single retry
+# per hold expiry. Recovery closes and resets everything.
+
+
+def _trip(cs, now=NOW):
+    """Trip the breaker at `now` with 3 recent failed kicks; returns its state."""
+    fk = [now - 20 * 60, now - 10 * 60, now - 5 * 60]
+    allow, trip, fk2, hold, retry = cs.breaker_decision(fk, None, False, True, now)
+    assert trip is True
+    return fk2, hold, retry
+
+
+def test_breaker_recovery_resets_everything(cs):
+    allow, trip, fk, hold, retry = cs.breaker_decision(
+        [NOW - 60], NOW + HOUR, True, False, NOW)
+    assert (allow, trip, fk, hold, retry) == (True, False, [], None, False)
+
+
+def test_breaker_stays_closed_under_threshold(cs):
+    fk = [NOW - 10 * 60, NOW - 5 * 60]
+    allow, trip, fk2, hold, retry = cs.breaker_decision(fk, None, False, True, NOW)
+    assert allow is True and trip is False
+    assert hold is None and fk2 == fk
+
+
+def test_breaker_trips_on_three_recent_failed_kicks(cs):
+    fk, hold, retry = _trip(cs)
+    assert hold == NOW + cs.BREAKER_HOLD_S
+    assert retry is False
+
+
+def test_breaker_ignores_kicks_outside_window(cs):
+    fk = [NOW - 2 * HOUR, NOW - 90 * 60, NOW - 5 * 60]  # only one recent
+    allow, trip, fk2, hold, retry = cs.breaker_decision(fk, None, False, True, NOW)
+    assert allow is True and trip is False
+    assert fk2 == [NOW - 5 * 60]  # stale entries pruned
+
+
+def test_breaker_holds_without_retripping(cs):
+    _, hold, _ = _trip(cs)
+    later = NOW + HOUR  # mid-hold
+    allow, trip, _, hold2, _ = cs.breaker_decision([], hold, False, True, later)
+    assert allow is False and trip is False
+    assert hold2 == hold  # hold end unchanged
+
+
+def test_breaker_grants_one_retry_at_expiry(cs):
+    _, hold, _ = _trip(cs)
+    at_expiry = hold + 1
+    allow, trip, _, hold2, retry = cs.breaker_decision([], hold, False, True, at_expiry)
+    assert allow is True and trip is False  # half-open: the one retry
+    assert retry is True
+
+
+def test_breaker_rearms_silently_after_failed_retry(cs):
+    _, hold, _ = _trip(cs)
+    after_retry = hold + 300  # next 5-min cycle, still degraded
+    allow, trip, _, hold2, retry = cs.breaker_decision([], hold, True, True, after_retry)
+    assert allow is False
+    assert trip is False  # re-arm must NOT re-DM every 2h
+    assert hold2 == after_retry + cs.BREAKER_HOLD_S
+    assert retry is False  # fresh retry available at the next expiry
+
+
+def test_breaker_successful_retry_closes(cs):
+    _, hold, _ = _trip(cs)
+    allow, trip, fk, hold2, retry = cs.breaker_decision([], hold, True, False, hold + 300)
+    assert (allow, trip, fk, hold2, retry) == (True, False, [], None, False)
+
+
+def test_breaker_full_incident_lifecycle(cs):
+    # closed → 3 failed kicks → open → hold → half-open retry → fail →
+    # re-armed open → next expiry retry → recovery → closed.
+    t = NOW
+    fk, hold, retry = [], None, False
+    for i in range(3):  # three kicks, 10 min apart, none restore
+        allow, trip, fk, hold, retry = cs.breaker_decision(fk, hold, retry, True, t)
+        assert allow is True and trip is False
+        fk = fk + [t]  # driver appends on each fired kick
+        t += 10 * 60
+    allow, trip, fk, hold, retry = cs.breaker_decision(fk, hold, retry, True, t)
+    assert trip is True and allow is False           # opens
+    t = hold + 1
+    allow, _, fk, hold, retry = cs.breaker_decision(fk, hold, retry, True, t)
+    assert allow is True and retry is True           # half-open retry
+    fk = fk + [t]
+    t += 300
+    allow, trip, fk, hold, retry = cs.breaker_decision(fk, hold, retry, True, t)
+    assert allow is False and trip is False          # re-armed, silent
+    t = hold + 1
+    allow, _, fk, hold, retry = cs.breaker_decision(fk, hold, retry, True, t)
+    assert allow is True                             # second retry
+    allow, _, fk, hold, retry = cs.breaker_decision(fk, hold, retry, False, t + 300)
+    assert (fk, hold, retry) == ([], None, False)    # recovery resets
