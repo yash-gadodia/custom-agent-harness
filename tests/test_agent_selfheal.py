@@ -99,3 +99,12 @@ def test_save_state_cleans_up_tempfile_on_dump_failure(lib, tmp_path):
         lib.save_state(1, object(), p)  # unserialisable value
     assert list(tmp_path.glob(".sh-*.tmp")) == []  # tempfile unlinked
     assert not p.exists()  # no partial state written
+
+
+def test_state_file_is_owner_only(lib, tmp_path):
+    # 1246bf7: restart timestamps must not inherit a lax umask on a shared
+    # host — save_state chmods the written file to 0600 like alert_gate._save
+    # and calorie_lib._atomic_write_json.
+    p = tmp_path / "state.json"
+    lib.save_state(2, 1000.0, p)
+    assert (p.stat().st_mode & 0o777) == 0o600
