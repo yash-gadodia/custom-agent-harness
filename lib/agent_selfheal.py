@@ -31,9 +31,17 @@ def decide_self_heal(streak, last_restart_at, now,
     """
     if streak < min_streak:
         return False, f"streak {streak} < {min_streak} — alert-only, no restart yet"
-    if last_restart_at is not None and (now - last_restart_at) < cooldown_sec:
-        left_min = int((cooldown_sec - (now - last_restart_at)) // 60)
-        return False, f"restart cooldown active (~{left_min}min left) — alert-only"
+    if last_restart_at is not None:
+        elapsed = now - last_restart_at
+        # A future last_restart_at (clock skew, bad NTP on boot, or a
+        # hand-edited value past load_state's sign/NaN guards) makes elapsed
+        # negative, which trivially satisfies `< cooldown_sec` and would block
+        # every restart forever until the clock caught up — the exact
+        # restart-storm-inverse the cooldown exists to prevent. Only apply
+        # cooldown when the recorded restart is actually in the past.
+        if 0 <= elapsed < cooldown_sec:
+            left_min = int((cooldown_sec - elapsed) // 60)
+            return False, f"restart cooldown active (~{left_min}min left) — alert-only"
     return True, f"streak {streak} >= {min_streak} and cooldown clear — restarting runtime"
 
 
