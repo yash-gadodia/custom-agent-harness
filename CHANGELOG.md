@@ -3,6 +3,17 @@
 A layer-by-layer evolution of the harness. Dates are when each piece first
 shipped in the live deployment it was extracted from.
 
+## 2026-09-20 — daemon liveness + one-alert-per-incident
+- `lib/daemon_liveness.py`: supervise always-on LaunchAgents. On some macOS
+  builds `gui/<uid>` honours neither `StartInterval` nor `KeepAlive`, so a
+  resident job can die and stay dead while still looking installed to
+  `launchctl` — and because it exits cleanly, an exit-status watcher never
+  flags it. Config key: `always_on_labels`.
+- `lib/incident_claims.py`: a job that reports its own failure claims the
+  incident by launchd label, and `watcher/cron-failure-watcher.sh` drops its
+  generic "<label> exit N" line for that label. Claims expire, and every path
+  fails open, so the worst case is a duplicate alert rather than a silent one.
+
 ## 2026-06-22 — agent + channel self-heal
 - `lib/agent_selfheal.py` + `scripts/agent-health-probe.py`: synthetic per-agent
   ping; on N consecutive silent runs, cooldown-gated auto-restart, then escalate.

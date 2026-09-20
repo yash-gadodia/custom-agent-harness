@@ -24,6 +24,8 @@ rules learned the hard way:
 | CLI backend | `scripts/cli-watchdog.sh`, `lib/shim_classify.py` — classify errors → retry/failover/surface |
 | Channel | `scripts/channel-selfheal.sh`, `lib/channel_selfheal.py` — recover silent chat channels |
 | Cron / launchd | `watcher/cron-failure-watcher.sh`, `lib/launchagent_failures.py`, `lib/launchd_selfheal.py` |
+| Always-on daemons | `lib/daemon_liveness.py` — restart resident jobs launchd quietly let die |
+| Alert dedup | `lib/incident_claims.py` — one incident produces one alert, not two |
 | Agent | `scripts/agent-health-probe.py`, `lib/agent_selfheal.py` — synthetic ping → cooldown-gated auto-restart |
 | Data / creds | `scripts/backup-claude-creds.sh`, `scripts/backup-weekly.sh`, `lib/pii_redact.py` |
 

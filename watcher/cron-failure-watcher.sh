@@ -22,6 +22,7 @@ import json, os, subprocess, sys, time, urllib.parse, urllib.request
 sys.path.insert(0, os.environ["HARNESS_LIB"])
 from launchagent_failures import parse_launchctl_list
 from launchd_selfheal import decide
+import incident_claims
 
 cfg = json.load(open(os.environ["CONFIG"]))
 state_dir = os.path.expanduser(cfg.get("state_dir", "~/.config/openclaw-harness"))
@@ -29,6 +30,9 @@ os.makedirs(state_dir, exist_ok=True)
 state_file = os.path.join(state_dir, "watcher-state.json")
 selfheal_file = os.path.join(state_dir, "selfheal-state.json")
 log_file = os.path.join(state_dir, "watcher.log")
+# Jobs that detect their own failure record it here (see lib/incident_claims.py);
+# this watcher then drops its own generic line for that label.
+claims_file = os.path.join(state_dir, "incident-claims.json")
 
 tg = cfg["telegram"]
 token = os.environ.get(tg.get("bot_token_env", ""), "")
@@ -83,7 +87,26 @@ for label in kicks:
         logmsg(f"selfheal kickstart FAILED for {label}: {(r.stderr or r.stdout).strip()}")
 json.dump(sh_state, open(selfheal_file, "w"), indent=2)
 
-lines = [f"• <code>{l}</code> exit {s}" for l, s in sorted(new.items())]
+failure_lines = [f"• <code>{l}</code> exit {s}" for l, s in sorted(new.items())]
+# A job that already sent its own detailed failure has claimed the incident;
+# this generic "<label> exit N" would be a second ping saying strictly less.
+# Fails open: an unreadable claim store keeps every line.
+try:
+    with open(claims_file) as f:
+        _claim_state = json.load(f)
+except (OSError, ValueError):
+    _claim_state = {}
+failure_lines, _suppressed = incident_claims.partition_lines(
+    failure_lines, _claim_state, now=time.time())
+if _suppressed:
+    logmsg(f"suppressed {len(_suppressed)} line(s) already self-reported: {_suppressed}")
+    # Mark them handled so they are not reconsidered every pass; the incident
+    # was reported, just not by us.
+    for _line in _suppressed:
+        _lbl = incident_claims.label_from_line(_line)
+        if _lbl in new:
+            state[_lbl] = new[_lbl]
+lines = list(failure_lines)
 for l in kicks:
     lines.append(f"🩹 selfheal: kickstarted <code>{l}</code>"
                  + (", kickstart FAILED" if l in kick_failed else ", verifying next pass"))

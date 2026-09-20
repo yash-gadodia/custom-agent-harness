@@ -1,8 +1,14 @@
 {
-  "watch_prefixes": ["com.mycompany."],
+  "watch_prefixes": [
+    "com.mycompany."
+  ],
   "selfheal_allowlist": [
     "com.mycompany.blog-publisher",
     "com.mycompany.nightly-backup"
+  ],
+  "always_on_labels": [
+    "com.mycompany.queue-worker",
+    "com.mycompany.relay-bridge"
   ],
   "telegram": {
     "bot_token_env": "HARNESS_TG_TOKEN",
