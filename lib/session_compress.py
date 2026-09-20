@@ -27,6 +27,26 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Sequence
 
+# --- OpenClaw-isolated claude-cli account -------------------------------
+# Every claude-cli call below must authenticate as the OpenClaw agent, not as
+# the operator's interactive session. OAuth refresh tokens are single-use, so an
+# interactive `claude` refresh and a headless cron refresh racing on the SAME
+# ~/.claude token leaves the loser permanently unable to refresh. On
+# 2026-09-20 that killed every claude-cli cron between 07:00 and 11:00 SGT
+# with "Failed to authenticate: OAuth session expired and could not be
+# refreshed". ~/.claude-openclaw has its own keychain entry, its own 8-hourly
+# rotation and a reseed path (reseed-openclaw-cred.py).
+# setdefault, so an explicit override still wins. Applied only when that config
+# dir actually exists: on a fresh checkout there is no isolated account, and
+# forcing CLAUDE_CONFIG_DIR at a non-existent dir would turn a working
+# `claude` login into "Not logged in - Please run /login".
+import os as _os_ccd
+from pathlib import Path as _Path_ccd
+_ccd = _Path_ccd.home() / ".claude-openclaw"
+if _ccd.is_dir():
+    _os_ccd.environ.setdefault("CLAUDE_CONFIG_DIR", str(_ccd))
+# ------------------------------------------------------------------------
+
 
 DEFAULT_SIZE_THRESHOLD_BYTES = 50 * 1024  # 50KB
 DEFAULT_PROTECT_LAST_N = 4
