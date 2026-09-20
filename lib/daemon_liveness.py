@@ -53,25 +53,35 @@ def parse_pids(listing: str) -> dict[str, str]:
     return pids
 
 
-def down_labels(listing: str, always_on=ALWAYS_ON) -> set[str]:
+def running_from_listing(listing: str, always_on=ALWAYS_ON) -> set[str]:
+    """Supervised labels that `launchctl list` shows with a live PID.
+
+    Only usable when the caller shares a launchd domain with the jobs. A
+    supervisor running in the SYSTEM domain does not: its `launchctl list`
+    omits the user's gui/<uid> agents entirely, which reads as "everything is
+    down" and triggers a restart of every healthy daemon on every tick. Prefer
+    a domain-explicit probe (launchctl print gui/<uid>/<label>) and pass the
+    result to decide() directly.
+    """
+    running = set()
+    for label, pid in parse_pids(listing).items():
+        if label in always_on and pid.lstrip("-").isdigit() and int(pid) > 0:
+            running.add(label)
+    return running
+
+
+def down_labels(running, always_on=ALWAYS_ON) -> set[str]:
     """Supervised labels with no live process.
 
-    A label missing from the listing entirely counts as down: that is what an
-    unloaded job looks like, and an unloaded always-on job is exactly the
-    silent failure this module exists to catch.
+    `running` is the set of labels observed alive. A supervised label that is
+    absent counts as down — that is what an unloaded job looks like, and an
+    unloaded always-on job is exactly the silent failure this exists to catch.
     """
-    pids = parse_pids(listing)
-    down = set()
-    for label in always_on:
-        pid = pids.get(label)
-        if pid is None or pid == "-" or not pid.lstrip("-").isdigit():
-            down.add(label)
-        elif int(pid) <= 0:
-            down.add(label)
-    return down
+    running = set(running or ())
+    return {label for label in always_on if label not in running}
 
 
-def decide(listing: str, state: dict, now: float,
+def decide(running, state: dict, now: float,
            always_on=ALWAYS_ON) -> tuple[list[str], list[str], dict]:
     """(to_kickstart, to_escalate, new_state).
 
@@ -80,7 +90,7 @@ def decide(listing: str, state: dict, now: float,
     the alert every 120s would be the noise this whole exercise is removing.
     """
     state = {k: dict(v) for k, v in state.items() if isinstance(v, dict)}
-    down = down_labels(listing, always_on)
+    down = down_labels(running, always_on)
     kick: list[str] = []
     escalate: list[str] = []
 
