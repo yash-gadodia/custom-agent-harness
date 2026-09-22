@@ -96,9 +96,17 @@ def channel_decision(health, streak, last_kick_at, now):
         return False, False, [], 0, last_kick_at
 
     new_streak = streak + 1
-    kick = new_streak >= CHANNEL_FAIL_THRESHOLD and (
-        last_kick_at is None or now - last_kick_at >= KICK_COOLDOWN_S
-    )
+    # A future last_kick_at (clock skew on boot, bad NTP, a hand-edited value)
+    # makes `now - last_kick_at` negative, which trivially satisfies
+    # `< KICK_COOLDOWN_S` and would block every kick forever until the clock
+    # catches up — the exact kick-storm-inverse the cooldown exists to prevent.
+    # Only apply cooldown when the recorded kick is actually in the past.
+    # Mirrors the guard in agent_selfheal.decide_self_heal.
+    cooldown_active = False
+    if last_kick_at is not None:
+        elapsed = now - last_kick_at
+        cooldown_active = 0 <= elapsed < KICK_COOLDOWN_S
+    kick = new_streak >= CHANNEL_FAIL_THRESHOLD and not cooldown_active
     return True, kick, sorted(down), new_streak, (now if kick else last_kick_at)
 
 
@@ -127,8 +135,12 @@ def escalation_decision(down, kicks_since_recovery, escalated_for, last_gw_resta
         return False, escalated_for
     if escalated_for is not None and sorted(escalated_for) == sig:
         return False, escalated_for      # already tried a restart for exactly this
-    if last_gw_restart_at is not None and now - last_gw_restart_at < GATEWAY_RESTART_COOLDOWN_S:
-        return False, escalated_for
+    if last_gw_restart_at is not None:
+        # Same future-timestamp guard as channel_decision: a negative elapsed
+        # would silently suppress every escalation until the clock catches up.
+        elapsed = now - last_gw_restart_at
+        if 0 <= elapsed < GATEWAY_RESTART_COOLDOWN_S:
+            return False, escalated_for
     return True, sig
 
 
